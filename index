@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="_ds/nocturne-bacca54e-5ba3-433b-9ff1-9aea7f812077/styles.css">
+  <script src="_ds/nocturne-bacca54e-5ba3-433b-9ff1-9aea7f812077/_ds_bundle.js"></script>
+</helmet>
+<div style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); display: flex; align-items: flex-start; justify-content: center; padding: var(--space-6);">
+  <div class="card elev-md" style="max-width: 760px; width: 100%; padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5);">
+
+    <div>
+      <div class="card-kicker">Chaos game</div>
+      <div class="card-title" style="font-size: 22px;">{{ shapeTitle }} fractal</div>
+      <div class="card-body" style="margin-top: var(--space-3);">
+        This applet will take your dot and do the following:
+        <ul style="margin: var(--space-2) 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 2px;">
+          <li>Pick a corner of the triangle at random</li>
+          <li>Travel halfway to that corner</li>
+          <li>Drop another dot</li>
+        </ul>
+        A fractal pattern will emerge!
+      </div>
+      <div class="card-body" style="margin-top: var(--space-2);">{{ instructionText }}</div>
+    </div>
+
+    <div style="position: relative; border: 1px solid var(--color-neutral-700); border-radius: var(--radius-md); background: var(--color-neutral-900); align-self: center;">
+      <canvas ref="{{ canvasRef }}" width="640" height="420" style="display: block; cursor: {{ canvasCursor }}; border-radius: var(--radius-md);" onClick="{{ handleCanvasClick }}"></canvas>
+      <sc-if value="{{ showPlaceholderHint }}">
+        <div style="position: absolute; top: var(--space-3); left: 50%; transform: translateX(-50%); font-size: 13px; color: var(--color-neutral-300); background: var(--color-neutral-800); padding: 4px 10px; border-radius: var(--radius-sm); pointer-events: none;">Click inside the {{ shapeTitle }} to place a starting point</div>
+      </sc-if>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: var(--space-4);">
+      <div>
+        <div style="font-size: 13px; color: var(--color-neutral-300); margin-bottom: var(--space-2);">Number of dots</div>
+        <div class="seg">
+          <sc-for list="{{ dotOptions }}" as="opt" hint-placeholder-count="3">
+            <button type="button" class="seg-opt {{ opt.activeClass }}" disabled="{{ running }}" onClick="{{ opt.select }}">{{ opt.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size: 13px; color: var(--color-neutral-300); margin-bottom: var(--space-2);">Speed</div>
+        <div class="seg">
+          <sc-for list="{{ speedOptions }}" as="opt" hint-placeholder-count="3">
+            <button type="button" class="seg-opt {{ opt.activeClass }}" disabled="{{ running }}" onClick="{{ opt.select }}">{{ opt.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: var(--space-3);">
+      <button type="button" class="btn btn-primary" disabled="{{ goDisabled }}" onClick="{{ handleGo }}">{{ goLabel }}</button>
+      <button type="button" class="btn btn-ghost" onClick="{{ handleReset }}">Reset</button>
+      <div style="margin-left: auto; font-size: 13px; color: var(--color-neutral-300);">{{ statusText }}</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 800, &quot;height&quot;: 900}}">
+class Component extends DCLogic {
+  state = {
+    sides: 3,
+    dotTarget: 100,
+    // shape locked to triangle
+    speed: 10,
+    started: false,
+    running: false,
+    placed: 0
+  };
+
+  constructor(props) {
+    super(props);
+    this.canvasRef = React.createRef();
+    this.startPoint = null;
+    this.current = null;
+    this.corners = null;
+    this.timer = null;
+  }
+
+  componentDidMount() {
+    const canvas = this.canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    this.ctx = ctx;
+    this.corners = this.generateCorners(this.state.sides);
+    const cs = getComputedStyle(document.documentElement);
+    this.accent = cs.getPropertyValue('--color-accent').trim() || '#9184d9';
+    this.startColor = cs.getPropertyValue('--color-text').trim() || '#e9e9ed';
+    this.drawBase();
+  }
+
+  componentWillUnmount() {
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  generateCorners(sides) {
+    const canvas = this.canvasRef.current;
+    const w = canvas.width, h = canvas.height;
+    const cx = w / 2, cy = h / 2 + 10;
+    const radius = Math.min(w, h) / 2 - 50;
+    const corners = [];
+    for (let i = 0; i < sides; i++) {
+      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
+      corners.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+    }
+    return corners;
+  }
+
+  selectSides(n) {
+    if (this.state.running) return;
+    this.corners = this.generateCorners(n);
+    this.startPoint = null;
+    this.current = null;
+    this.setState({ sides: n, started: false, running: false, placed: 0 });
+    this.drawBase();
+  }
+
+  drawBase() {
+    const canvasNow = this.canvasRef.current;
+    if (!this.corners || this.lastW !== canvasNow.width || this.lastH !== canvasNow.height) {
+      this.corners = this.generateCorners(this.state.sides);
+      this.lastW = canvasNow.width;
+      this.lastH = canvasNow.height;
+    }
+    const ctx = this.ctx, canvas = this.canvasRef.current;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(233,233,237,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    this.corners.forEach((c, i) => {
+      if (i === 0) ctx.moveTo(c.x, c.y); else ctx.lineTo(c.x, c.y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = this.accent;
+    this.corners.forEach(c => {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  pointInPolygon(p) {
+    const pts = this.corners;
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+      const intersect = ((yi > p.y) !== (yj > p.y)) &&
+        (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  drawDot(p, color, radius) {
+    const ctx = this.ctx;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  handleCanvasClick(e) {
+    if (this.state.running) return;
+    if (!this.corners) this.corners = this.generateCorners(this.state.sides);
+    const canvas = this.canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const p = { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+    if (!this.pointInPolygon(p)) return;
+    this.startPoint = p;
+    this.current = p;
+    this.setState({ started: true, placed: 0 });
+    this.drawBase();
+    this.drawDot(p, this.startColor, 4);
+  }
+
+  selectDotTarget(n) {
+    if (this.state.running) return;
+    this.setState({ dotTarget: n });
+  }
+
+  selectSpeed(n) {
+    if (this.state.running) return;
+    this.setState({ speed: n });
+  }
+
+  handleGo() {
+    if (this.state.running || !this.startPoint) return;
+    this.setState({ running: true, placed: 0 });
+    const intervalMs = 1000 / this.state.speed;
+    const target = this.state.dotTarget;
+    this.timer = setInterval(() => {
+      const corner = this.corners[Math.floor(Math.random() * 3)];
+      const next = {
+        x: (this.current.x + corner.x) / 2,
+        y: (this.current.y + corner.y) / 2
+      };
+      this.current = next;
+      this.drawDot(next, this.accent, 1.5);
+      const placed = this.state.placed + 1;
+      this.setState({ placed });
+      if (placed >= target) {
+        clearInterval(this.timer);
+        this.timer = null;
+        this.setState({ running: false });
+      }
+    }, intervalMs);
+  }
+
+  handleReset() {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    this.startPoint = null;
+    this.current = null;
+    this.setState({ started: false, running: false, placed: 0 });
+    if (this.ctx) this.drawBase();
+  }
+
+  renderVals() {
+    const { sides, dotTarget, speed, started, running, placed } = this.state;
+    const shapeNames = { 3: 'Triangle' };
+    const dotOptions = [100, 1000, 2500].map(n => ({
+      label: n.toLocaleString(),
+      activeClass: n === dotTarget ? 'active' : '',
+      select: () => this.selectDotTarget(n)
+    }));
+    const speedOptions = [5, 10, 20, 30].map(n => ({
+      label: n + '/sec',
+      activeClass: n === speed ? 'active' : '',
+      select: () => this.selectSpeed(n)
+    }));
+
+    const shapeLabel = shapeNames[sides].toLowerCase();
+    let statusText = 'Click a point, choose settings, then Go.';
+    if (running) statusText = 'Placing dots: ' + placed.toLocaleString() + ' / ' + dotTarget.toLocaleString();
+    else if (started && placed > 0) statusText = 'Done: ' + placed.toLocaleString() + ' / ' + dotTarget.toLocaleString() + ' dots';
+    else if (started) statusText = 'Ready — choose dots and speed, then Go.';
+
+    return {
+      canvasRef: this.canvasRef,
+      canvasCursor: running ? 'default' : 'crosshair',
+      showPlaceholderHint: !started,
+      shapeTitle: shapeNames[sides],
+      instructionText: started
+        ? 'Pick a dot count and speed, then click Go.'
+        : 'Click anywhere inside the ' + shapeLabel + ' below to set a starting point.',
+      dotOptions,
+      speedOptions,
+      goDisabled: !started || running,
+      goLabel: running ? 'Running…' : 'Go',
+      statusText,
+      running,
+      handleCanvasClick: (e) => this.handleCanvasClick(e),
+      handleGo: () => this.handleGo(),
+      handleReset: () => this.handleReset()
+    };
+  }
+}
+</script>
+</body>
+</html>
